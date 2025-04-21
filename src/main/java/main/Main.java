@@ -13,6 +13,8 @@ import java.security.MessageDigest;
 import java.sql.*;
 import java.util.Properties;
 import java.util.Random;
+import de.mkammerer.argon2.Argon2;
+import de.mkammerer.argon2.Argon2Factory;
 
 public class Main {
     private static final String DB_URL = "jdbc:sqlite:password_manager.db";
@@ -33,6 +35,25 @@ public class Main {
             JOptionPane.showMessageDialog(null, "Database connection failed: " + e.getMessage());
             System.exit(1);
         }
+    }
+
+    // Hash Master Key
+    private static String hashWithArgon2(String masterKey) {
+        Argon2 argon2 = Argon2Factory.create();
+
+        // Parameters:
+        // iterations = 10
+        // memory = 65536 KB (64MB)
+        // parallelism = 1
+        // hash length = 32 bytes
+        // type = Argon2id (resistant to both GPU and side-channel attacks)
+        return argon2.hash(10, 65536, 1, masterKey.toCharArray());
+    }
+
+    // Verify Master Key
+    private static boolean verifyArgon2Hash(String hash, String masterKey) {
+        Argon2 argon2 = Argon2Factory.create();
+        return argon2.verify(hash, masterKey.toCharArray());
     }
 
     private static void initializeDatabase() throws SQLException {
@@ -514,11 +535,13 @@ public class Main {
 
     private static void registerUser(String email, String password, String masterKey) throws Exception {
         String encryptedPassword = encrypt(password, masterKey);
+        String hashedMasterKey = hashWithArgon2(masterKey); // Argon2 hashing
+
         String query = "INSERT INTO users (email, password, master_key) VALUES (?, ?, ?)";
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setString(1, email);
             stmt.setString(2, encryptedPassword);
-            stmt.setString(3, masterKey); // In a real app, you'd hash this
+            stmt.setString(3, hashedMasterKey);
             stmt.executeUpdate();
         }
     }
@@ -530,8 +553,30 @@ public class Main {
             ResultSet rs = stmt.executeQuery();
             if (rs.next()) {
                 String storedPassword = rs.getString("password");
-                currentUserMasterKey = rs.getString("master_key");
-                String decryptedPassword = decrypt(storedPassword, currentUserMasterKey);
+                String storedHashedMasterKey = rs.getString("master_key");
+
+                // Get master key from user
+                JPasswordField masterKeyField = new JPasswordField();
+                int option = JOptionPane.showConfirmDialog(
+                        null,
+                        masterKeyField,
+                        "Enter your master key:",
+                        JOptionPane.OK_CANCEL_OPTION
+                );
+
+                if (option != JOptionPane.OK_OPTION) {
+                    return false;
+                }
+
+                String masterKey = new String(masterKeyField.getPassword());
+
+                // Verify master key with Argon2
+                if (!verifyArgon2Hash(storedHashedMasterKey, masterKey)) {
+                    return false;
+                }
+
+                currentUserMasterKey = masterKey; // Store for session
+                String decryptedPassword = decrypt(storedPassword, masterKey);
                 return decryptedPassword.equals(password);
             }
         }
