@@ -40,13 +40,6 @@ public class Main {
     // Hash Master Key
     private static String hashWithArgon2(String masterKey) {
         Argon2 argon2 = Argon2Factory.create();
-
-        // Parameters:
-        // iterations = 10
-        // memory = 65536 KB (64MB)
-        // parallelism = 1
-        // hash length = 32 bytes
-        // type = Argon2id (resistant to both GPU and side-channel attacks)
         return argon2.hash(10, 65536, 1, masterKey.toCharArray());
     }
 
