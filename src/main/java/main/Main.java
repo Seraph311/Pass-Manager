@@ -1,5 +1,8 @@
 package main;
 
+import java.awt.datatransfer.Clipboard;
+import java.awt.datatransfer.StringSelection;
+import java.awt.Toolkit;
 import javax.swing.*;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
@@ -342,6 +345,9 @@ public class Main {
         JButton viewPasswordButton = new JButton("View Password");
         viewPasswordButton.setBackground(new Color(70, 130, 180));
         viewPasswordButton.setForeground(Color.WHITE);
+        JButton copyPasswordButton = new JButton("Copy");
+        copyPasswordButton.setBackground(new Color(100, 149, 237));
+        copyPasswordButton.setForeground(Color.WHITE);
         JButton deletePasswordButton = new JButton("Delete");
         deletePasswordButton.setBackground(new Color(220, 20, 60));
         deletePasswordButton.setForeground(Color.WHITE);
@@ -350,6 +356,7 @@ public class Main {
         refreshButton.setForeground(Color.WHITE);
 
         buttonPanel.add(viewPasswordButton);
+        buttonPanel.add(copyPasswordButton);
         buttonPanel.add(deletePasswordButton);
         buttonPanel.add(refreshButton);
         viewPasswordsPanel.add(buttonPanel, BorderLayout.SOUTH);
@@ -495,6 +502,31 @@ public class Main {
             }
         });
 
+        // Copy Password
+        copyPasswordButton.addActionListener(e -> {
+            int selectedRow = passwordTable.getSelectedRow();
+            if (selectedRow == -1) {
+                JOptionPane.showMessageDialog(frame, "Please select a password to copy");
+                return;
+            }
+
+            // Get the password value from the table
+            Object passwordValue = passwordTable.getValueAt(selectedRow, 3);
+
+            // Only allow copying if the password is visible (not bullet points)
+            if (passwordValue.toString().equals("••••••••")) {
+                JOptionPane.showMessageDialog(frame, "Please view the password first before copying");
+                return;
+            }
+
+            // Copy to clipboard
+            StringSelection stringSelection = new StringSelection(passwordValue.toString());
+            Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+            clipboard.setContents(stringSelection, null);
+
+            JOptionPane.showMessageDialog(frame, "Password copied to clipboard!");
+        });
+
         // Refresh Button Action
         refreshButton.addActionListener(loadPasswordsAction);
 
@@ -578,11 +610,7 @@ public class Main {
                                                        boolean hasFocus, int row, int column) {
             JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
             if (column == 3) { // Password column
-                if (value.toString().equals("••••••••")) {
-                    label.setText("••••••••");
-                } else {
-                    label.setText(value.toString());
-                }
+                label.setText(value.toString());
             }
             return label;
         }
