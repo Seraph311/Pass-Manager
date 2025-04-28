@@ -1,5 +1,8 @@
 package main;
 
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
+import java.security.SecureRandom;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.StringSelection;
 import java.awt.Toolkit;
@@ -768,26 +771,49 @@ public class Main {
     }
 
     private static String encrypt(String data, String key) throws Exception {
-        SecretKeySpec secretKey = generateKey(key);
+        // Generate a random salt
+        SecureRandom random = new SecureRandom();
+        byte[] salt = new byte[16];
+        random.nextBytes(salt);
+
+        // Derive a secure key
+        SecretKeySpec secretKey = generateKey(key, salt);
+
+        // Encrypt the data
         Cipher cipher = Cipher.getInstance("AES");
         cipher.init(Cipher.ENCRYPT_MODE, secretKey);
         byte[] encryptedBytes = cipher.doFinal(data.getBytes());
-        return bytesToHex(encryptedBytes);
+
+        // Combine salt + encrypted data
+        byte[] combined = new byte[salt.length + encryptedBytes.length];
+        System.arraycopy(salt, 0, combined, 0, salt.length);
+        System.arraycopy(encryptedBytes, 0, combined, salt.length, encryptedBytes.length);
+        return bytesToHex(combined);
     }
 
     private static String decrypt(String encryptedData, String key) throws Exception {
-        SecretKeySpec secretKey = generateKey(key);
+        // Extract salt and encrypted data
+        byte[] combined = hexToBytes(encryptedData);
+        byte[] salt = new byte[16];
+        byte[] encryptedBytes = new byte[combined.length - salt.length];
+        System.arraycopy(combined, 0, salt, 0, salt.length);
+        System.arraycopy(combined, salt.length, encryptedBytes, 0, encryptedBytes.length);
+
+        // Derive the key using
+        SecretKeySpec secretKey = generateKey(key, salt);
+
+        // Decrypt the data
         Cipher cipher = Cipher.getInstance("AES");
         cipher.init(Cipher.DECRYPT_MODE, secretKey);
-        byte[] decryptedBytes = cipher.doFinal(hexToBytes(encryptedData));
+        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
         return new String(decryptedBytes);
     }
 
-    private static SecretKeySpec generateKey(String key) throws Exception {
-        byte[] keyBytes = key.getBytes("UTF-8");
-        MessageDigest sha = MessageDigest.getInstance("SHA-256");
-        keyBytes = sha.digest(keyBytes);
-        keyBytes = java.util.Arrays.copyOf(keyBytes, 16); // Use only first 128 bits
+
+    private static SecretKeySpec generateKey(String key, byte[] salt) throws Exception {
+        PBEKeySpec spec = new PBEKeySpec(key.toCharArray(), salt, 100000, 256);
+        SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+        byte[] keyBytes = factory.generateSecret(spec).getEncoded();
         return new SecretKeySpec(keyBytes, "AES");
     }
 
