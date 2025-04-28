@@ -17,9 +17,13 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 
 public class Main {
+
+    private static final int MAX_LOGIN_ATTEMPTS = 5;
+    private static final int LOCKOUT_MINUTES = 5;
+
     private static final String DB_URL = "jdbc:sqlite:password_manager.db";
-    private static final String EMAIL = "abreeze311@gmail.com"; // Your email
-    private static final String EMAIL_PASSWORD = "ctli nfaj zlwm giog"; // Your email password
+    private static final String EMAIL = "abreeze311@gmail.com";
+    private static final String EMAIL_PASSWORD = "ctli nfaj zlwm giog";
     private static Connection connection;
     private static String currentUserEmail;
     private static String currentUserMasterKey;
@@ -68,6 +72,13 @@ public class Main {
                 "username TEXT NOT NULL, " +
                 "encrypted_password TEXT NOT NULL, " +
                 "FOREIGN KEY (user_id) REFERENCES users(id))");
+
+        // Login attempt table
+        stmt.execute("CREATE TABLE IF NOT EXISTS login_attempts (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "email TEXT UNIQUE NOT NULL, " +
+                "attempts INTEGER NOT NULL DEFAULT 0, " +
+                "lockout_until INTEGER)");
 
         stmt.close();
     }
@@ -496,6 +507,70 @@ public class Main {
         });
     }
 
+    // Check login attempt
+    private static boolean checkLoginAttempts(String email) throws SQLException {
+        String query = "SELECT attempts, lockout_until FROM login_attempts WHERE email = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, email);
+            ResultSet rs = stmt.executeQuery();
+
+            if (rs.next()) {
+                int attempts = rs.getInt("attempts");
+                long lockoutUntil = rs.getLong("lockout_until");
+
+                // Check if user is currently locked out
+                if (lockoutUntil > 0) {
+                    long currentTime = System.currentTimeMillis();
+                    if (currentTime < lockoutUntil) {
+                        long minutesLeft = (lockoutUntil - currentTime) / (60 * 1000);
+                        JOptionPane.showMessageDialog(null,
+                                "Account locked. Try again in " + minutesLeft + " minutes.");
+                        return false;
+                    } else {
+                        // Lockout period has expired, reset attempts
+                        resetLoginAttempts(email);
+                    }
+                } else if (attempts >= MAX_LOGIN_ATTEMPTS) {
+                    // Too many attempts, lock the account
+                    long lockoutTime = System.currentTimeMillis() + (LOCKOUT_MINUTES * 60 * 1000);
+                    updateLoginAttempts(email, MAX_LOGIN_ATTEMPTS, lockoutTime);
+                    JOptionPane.showMessageDialog(null,
+                            "Too many failed attempts. Account locked for " + LOCKOUT_MINUTES + " minutes.");
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Update login attempt
+    private static void updateLoginAttempts(String email, int attempts, Long lockoutUntil) throws SQLException {
+        String query;
+        if (lockoutUntil != null) {
+            query = "INSERT OR REPLACE INTO login_attempts (email, attempts, lockout_until) VALUES (?, ?, ?)";
+        } else {
+            query = "INSERT OR REPLACE INTO login_attempts (email, attempts) VALUES (?, ?)";
+        }
+
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, email);
+            stmt.setInt(2, attempts);
+            if (lockoutUntil != null) {
+                stmt.setLong(3, lockoutUntil);
+            }
+            stmt.executeUpdate();
+        }
+    }
+
+    // Reset login attemp
+    private static void resetLoginAttempts(String email) throws SQLException {
+        String query = "DELETE FROM login_attempts WHERE email = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, email);
+            stmt.executeUpdate();
+        }
+    }
+
     // Custom cell renderer to show passwords as bullets
     static class PasswordCellRenderer extends DefaultTableCellRenderer {
         @Override
@@ -540,6 +615,11 @@ public class Main {
     }
 
     private static boolean authenticateUser(String email, String password) throws Exception {
+        // Check if account is locked
+        if (!checkLoginAttempts(email)) {
+            return false;
+        }
+
         String query = "SELECT password, master_key FROM users WHERE email = ?";
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setString(1, email);
@@ -548,7 +628,6 @@ public class Main {
                 String storedPassword = rs.getString("password");
                 String storedHashedMasterKey = rs.getString("master_key");
 
-                // Get master key from user
                 JPasswordField masterKeyField = new JPasswordField();
                 int option = JOptionPane.showConfirmDialog(
                         null,
@@ -563,17 +642,52 @@ public class Main {
 
                 String masterKey = new String(masterKeyField.getPassword());
 
-                // Verify master key with Argon2
                 if (!verifyArgon2Hash(storedHashedMasterKey, masterKey)) {
+                    // Increment failed attempt
+                    incrementFailedAttempt(email);
                     return false;
                 }
 
-                currentUserMasterKey = masterKey; // Store for session
+                currentUserMasterKey = masterKey;
                 String decryptedPassword = decrypt(storedPassword, masterKey);
-                return decryptedPassword.equals(password);
+
+                if (decryptedPassword.equals(password)) {
+                    // Successful login, reset attempts
+                    resetLoginAttempts(email);
+                    return true;
+                } else {
+                    // Increment failed attempt
+                    incrementFailedAttempt(email);
+                    return false;
+                }
+            } else {
+                // User not found
+                incrementFailedAttempt(email);
+                return false;
             }
         }
-        return false;
+    }
+
+    // Increment failed attempt
+    private static void incrementFailedAttempt(String email) throws SQLException {
+        String query = "SELECT attempts FROM login_attempts WHERE email = ?";
+        int attempts = 1;
+
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, email);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                attempts = rs.getInt("attempts") + 1;
+            }
+        }
+
+        if (attempts >= MAX_LOGIN_ATTEMPTS) {
+            // Lock the account
+            long lockoutTime = System.currentTimeMillis() + (LOCKOUT_MINUTES * 60 * 1000);
+            updateLoginAttempts(email, attempts, lockoutTime);
+        } else {
+            updateLoginAttempts(email, attempts, null);
+        }
     }
 
     private static void savePassword(String accountName, String username, String password) throws Exception {
@@ -694,4 +808,5 @@ public class Main {
 
         Transport.send(message);
     }
+
 }
