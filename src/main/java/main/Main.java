@@ -21,8 +21,14 @@ import java.util.Properties;
 import java.util.Random;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 public class Main {
+
+    private static final String PASSWORD_STRENGTH_WEAK = "Weak";
+    private static final String PASSWORD_STRENGTH_MEDIUM = "Medium";
+    private static final String PASSWORD_STRENGTH_STRONG = "Strong";
 
     private static final int MAX_LOGIN_ATTEMPTS = 5;
     private static final int LOCKOUT_MINUTES = 5;
@@ -96,6 +102,72 @@ public class Main {
                 "lockout_until INTEGER)");
 
         stmt.close();
+    }
+
+    // Generate Password
+    private static String generateStrongPassword() {
+        String upperCase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        String lowerCase = "abcdefghijklmnopqrstuvwxyz";
+        String numbers = "0123456789";
+        String specialChars = "!@#$%^&*()_+-=[]{}|;:,.<>?";
+        String allChars = upperCase + lowerCase + numbers + specialChars;
+
+        SecureRandom random = new SecureRandom();
+        StringBuilder password = new StringBuilder();
+
+        password.append(upperCase.charAt(random.nextInt(upperCase.length())));
+        password.append(lowerCase.charAt(random.nextInt(lowerCase.length())));
+        password.append(numbers.charAt(random.nextInt(numbers.length())));
+        password.append(specialChars.charAt(random.nextInt(specialChars.length())));
+
+        for (int i = 4; i < 16; i++) {
+            password.append(allChars.charAt(random.nextInt(allChars.length())));
+        }
+
+        for (int i = 0; i < password.length(); i++) {
+            int randomIndex = random.nextInt(password.length());
+            char temp = password.charAt(i);
+            password.setCharAt(i, password.charAt(randomIndex));
+            password.setCharAt(randomIndex, temp);
+        }
+
+        return password.toString();
+    }
+
+    // Check Password Strength
+    private static String checkPasswordStrength(String password) {
+        if (password == null || password.isEmpty()) {
+            return PASSWORD_STRENGTH_WEAK;
+        }
+
+        boolean hasUpper = false;
+        boolean hasLower = false;
+        boolean hasDigit = false;
+        boolean hasSpecial = false;
+        int strengthScore = 0;
+
+        // Check for character diversity
+        for (char c : password.toCharArray()) {
+            if (Character.isUpperCase(c)) hasUpper = true;
+            else if (Character.isLowerCase(c)) hasLower = true;
+            else if (Character.isDigit(c)) hasDigit = true;
+            else hasSpecial = true;
+        }
+
+        // Length check
+        if (password.length() >= 12) strengthScore += 2;
+        else if (password.length() >= 8) strengthScore += 1;
+
+        // Character diversity
+        if (hasUpper) strengthScore++;
+        if (hasLower) strengthScore++;
+        if (hasDigit) strengthScore++;
+        if (hasSpecial) strengthScore++;
+
+        // Determine strength
+        if (strengthScore >= 7) return PASSWORD_STRENGTH_STRONG;
+        if (strengthScore >= 5) return PASSWORD_STRENGTH_MEDIUM;
+        return PASSWORD_STRENGTH_WEAK;
     }
 
     private static void showLoginRegisterDialog() {
@@ -361,19 +433,37 @@ public class Main {
         gbc.gridx = 1;
         addPasswordPanel.add(passwordField, gbc);
 
+        gbc.gridy = 5;
+        gbc.gridx = 0;
+        gbc.gridwidth = 1;
+        addPasswordPanel.add(new JLabel("Strength:"), gbc);
+
+        JLabel strengthLabel = new JLabel("", SwingConstants.CENTER);
+        strengthLabel.setFont(new Font("Arial", Font.BOLD, 12));
+        gbc.gridx = 1;
+        addPasswordPanel.add(strengthLabel, gbc);
+
         JButton saveButton = new JButton("Save Password");
         saveButton.setBackground(new Color(70, 130, 180));
         saveButton.setForeground(Color.WHITE);
-        gbc.gridy = 5;
+        gbc.gridy = 6;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
         addPasswordPanel.add(saveButton, gbc);
+
+        JButton generateButton = new JButton("Generate");
+        generateButton.setBackground(new Color(70, 130, 180));
+        generateButton.setForeground(Color.WHITE);
+        gbc.gridy = 7;
+        gbc.gridx = 0;
+        gbc.gridwidth = 2;
+        addPasswordPanel.add(generateButton, gbc);
 
         // View Passwords Panel
         JPanel viewPasswordsPanel = new JPanel(new BorderLayout());
 
         // Table for displaying passwords
-        String[] columnNames = {"ID", "Vault", "Account Name", "Username", "Password"};
+        String[] columnNames = {"ID", "Vault", "Account Name", "Username", "Password", "Strength"};
         Object[][] data = {}; // Empty data to start with
 
         JTable passwordTable = new JTable(data, columnNames);
@@ -411,6 +501,8 @@ public class Main {
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
 
+
+
         Runnable loadVaults = () -> {
             try {
                 int userId = getUserId(currentUserEmail);
@@ -437,6 +529,54 @@ public class Main {
             }
         };
 
+
+        // Add password strength listener
+        passwordField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateStrength();
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateStrength();
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateStrength();
+            }
+
+            private void updateStrength() {
+                String password = new String(passwordField.getPassword());
+                String strength = checkPasswordStrength(password);
+
+                SwingUtilities.invokeLater(() -> {
+                    switch (strength) {
+                        case PASSWORD_STRENGTH_WEAK:
+                            strengthLabel.setText("Weak");
+                            strengthLabel.setForeground(Color.RED);
+                            break;
+                        case PASSWORD_STRENGTH_MEDIUM:
+                            strengthLabel.setText("Medium");
+                            strengthLabel.setForeground(Color.ORANGE);
+                            break;
+                        case PASSWORD_STRENGTH_STRONG:
+                            strengthLabel.setText("Strong");
+                            strengthLabel.setForeground(Color.GREEN);
+                            break;
+                    }
+                });
+            }
+        });
+
+        generateButton.addActionListener(e -> {
+            String generatedPassword = generateStrongPassword();
+            passwordField.setText(generatedPassword);
+            strengthLabel.setText("Strong (Generated)");
+            strengthLabel.setForeground(Color.GREEN);
+        });
+
         // Load vaults when application starts
         loadVaults.run();
 
@@ -450,14 +590,14 @@ public class Main {
                 String selectedVault = (String) vaultComboBox.getSelectedItem();
 
                 if ("All Passwords".equals(selectedVault)) {
-                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username " +
+                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username, sp.encrypted_password " +
                             "FROM saved_passwords sp " +
                             "LEFT JOIN vaults v ON sp.vault_id = v.id " +
                             "WHERE sp.user_id = ?";
                     stmt = connection.prepareStatement(query);
                     stmt.setInt(1, userId);
                 } else {
-                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username " +
+                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username, sp.encrypted_password " +
                             "FROM saved_passwords sp " +
                             "JOIN vaults v ON sp.vault_id = v.id " +
                             "WHERE sp.user_id = ? AND v.name = ?";
@@ -470,12 +610,15 @@ public class Main {
 
                 ResultSet rs = stmt.executeQuery();
                 while (rs.next()) {
-                    Object[] row = new Object[5];
+                    Object[] row = new Object[6]; // Now 6 columns
                     row[0] = rs.getInt("id");
                     row[1] = rs.getString("vault_name") != null ? rs.getString("vault_name") : "No Vault";
                     row[2] = rs.getString("account_name");
                     row[3] = rs.getString("username");
                     row[4] = "••••••••"; // Hidden password
+
+                    // Get the password strength (will be updated when password is viewed)
+                    row[5] = "N/A";
                     dataList.add(row);
                 }
 
@@ -604,7 +747,6 @@ public class Main {
 
             int passwordId = (int) passwordTable.getValueAt(selectedRow, 0);
 
-            // Modified password input dialog
             JPasswordField passwordField2 = new JPasswordField();
             passwordField2.setPreferredSize(new Dimension(200, 30));
 
@@ -625,9 +767,14 @@ public class Main {
                         // Temporarily show the password in the table
                         passwordTable.setValueAt(decryptedPassword, selectedRow, 4);
 
+                        // Update the strength column
+                        String strength = checkPasswordStrength(decryptedPassword);
+                        passwordTable.setValueAt(strength, selectedRow, 5);
+
                         // Set a timer to hide the password again after 5 seconds
                         Timer timer = new Timer(5000, evt -> {
                             passwordTable.setValueAt("••••••••", selectedRow, 4);
+                            passwordTable.setValueAt("N/A", selectedRow, 5);
                         });
                         timer.setRepeats(false);
                         timer.start();
@@ -825,8 +972,20 @@ public class Main {
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
                                                        boolean hasFocus, int row, int column) {
             JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            if (column == 4) { // Password column is now column 4
+            if (column == 4) { // Password column
                 label.setText(value.toString());
+            } else if (column == 5) { // Strength column
+                String strength = value.toString();
+                label.setText(strength);
+                if ("Weak".equals(strength)) {
+                    label.setForeground(Color.RED);
+                } else if ("Medium".equals(strength)) {
+                    label.setForeground(Color.ORANGE);
+                } else if ("Strong".equals(strength)) {
+                    label.setForeground(Color.GREEN);
+                } else {
+                    label.setForeground(Color.BLACK);
+                }
             }
             return label;
         }
