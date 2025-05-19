@@ -69,21 +69,21 @@ public class Main {
         // Create tables if they don't exist
         Statement stmt = connection.createStatement();
 
-        // Users table (unchanged)
+        // Users table
         stmt.execute("CREATE TABLE IF NOT EXISTS users (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "email TEXT UNIQUE NOT NULL, " +
                 "password TEXT NOT NULL, " +
                 "master_key TEXT NOT NULL)");
 
-        // Vaults table (new)
+        // Vaults table
         stmt.execute("CREATE TABLE IF NOT EXISTS vaults (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "user_id INTEGER NOT NULL, " +
                 "name TEXT NOT NULL, " +
                 "FOREIGN KEY (user_id) REFERENCES users(id))");
 
-        // Saved passwords table (modified)
+        // Saved passwords table
         stmt.execute("CREATE TABLE IF NOT EXISTS saved_passwords (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "user_id INTEGER NOT NULL, " +
@@ -94,7 +94,7 @@ public class Main {
                 "FOREIGN KEY (user_id) REFERENCES users(id), " +
                 "FOREIGN KEY (vault_id) REFERENCES vaults(id))");
 
-        // Login attempt table (unchanged)
+        // Login attempt table
         stmt.execute("CREATE TABLE IF NOT EXISTS login_attempts (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "email TEXT UNIQUE NOT NULL, " +
@@ -155,18 +155,19 @@ public class Main {
         }
 
         // Length check
-        if (password.length() >= 12) strengthScore += 2;
+        if (password.length() >= 16) strengthScore += 3;
+        else if (password.length() >= 12) strengthScore += 2;
         else if (password.length() >= 8) strengthScore += 1;
 
         // Character diversity
         if (hasUpper) strengthScore++;
         if (hasLower) strengthScore++;
         if (hasDigit) strengthScore++;
-        if (hasSpecial) strengthScore++;
+        if (hasSpecial) strengthScore += 2;
 
         // Determine strength
-        if (strengthScore >= 7) return PASSWORD_STRENGTH_STRONG;
-        if (strengthScore >= 5) return PASSWORD_STRENGTH_MEDIUM;
+        if (strengthScore >= 8) return PASSWORD_STRENGTH_STRONG;
+        if (strengthScore >= 6) return PASSWORD_STRENGTH_MEDIUM;
         return PASSWORD_STRENGTH_WEAK;
     }
 
@@ -573,8 +574,12 @@ public class Main {
         generateButton.addActionListener(e -> {
             String generatedPassword = generateStrongPassword();
             passwordField.setText(generatedPassword);
-            strengthLabel.setText("Strong (Generated)");
-            strengthLabel.setForeground(Color.GREEN);
+            // Force update the strength label
+            String strength = checkPasswordStrength(generatedPassword);
+            strengthLabel.setText(strength);
+            strengthLabel.setForeground(strength.equals(PASSWORD_STRENGTH_STRONG) ? Color.GREEN :
+                    strength.equals(PASSWORD_STRENGTH_MEDIUM) ? Color.ORANGE :
+                            Color.RED);
         });
 
         // Load vaults when application starts
