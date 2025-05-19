@@ -63,23 +63,32 @@ public class Main {
         // Create tables if they don't exist
         Statement stmt = connection.createStatement();
 
-        // Users table
+        // Users table (unchanged)
         stmt.execute("CREATE TABLE IF NOT EXISTS users (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "email TEXT UNIQUE NOT NULL, " +
                 "password TEXT NOT NULL, " +
                 "master_key TEXT NOT NULL)");
 
-        // Saved passwords table
+        // Vaults table (new)
+        stmt.execute("CREATE TABLE IF NOT EXISTS vaults (" +
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                "user_id INTEGER NOT NULL, " +
+                "name TEXT NOT NULL, " +
+                "FOREIGN KEY (user_id) REFERENCES users(id))");
+
+        // Saved passwords table (modified)
         stmt.execute("CREATE TABLE IF NOT EXISTS saved_passwords (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "user_id INTEGER NOT NULL, " +
+                "vault_id INTEGER, " +  // New field
                 "account_name TEXT NOT NULL, " +
                 "username TEXT NOT NULL, " +
                 "encrypted_password TEXT NOT NULL, " +
-                "FOREIGN KEY (user_id) REFERENCES users(id))");
+                "FOREIGN KEY (user_id) REFERENCES users(id), " +
+                "FOREIGN KEY (vault_id) REFERENCES vaults(id))");
 
-        // Login attempt table
+        // Login attempt table (unchanged)
         stmt.execute("CREATE TABLE IF NOT EXISTS login_attempts (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
                 "email TEXT UNIQUE NOT NULL, " +
@@ -269,15 +278,37 @@ public class Main {
     private static void showMainApplication() {
         JFrame frame = new JFrame("Password Manager - " + currentUserEmail);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(800, 600);
+        frame.setSize(1000, 700); // Increased size
         frame.setLayout(new BorderLayout());
 
         // Top Panel with Logout Button
-        JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        JPanel topPanel = new JPanel(new BorderLayout());
         JButton logoutButton = new JButton("Logout");
         logoutButton.setBackground(new Color(220, 20, 60));
         logoutButton.setForeground(Color.WHITE);
-        topPanel.add(logoutButton);
+        topPanel.add(logoutButton, BorderLayout.EAST);
+
+        // Vault selection combo box
+        JComboBox<String> vaultComboBox = new JComboBox<>();
+        vaultComboBox.addItem("All Passwords"); // Default option
+        JButton newVaultButton = new JButton("New Vault");
+        newVaultButton.setBackground(new Color(70, 130, 180));
+        newVaultButton.setForeground(Color.WHITE);
+        JButton renameVaultButton = new JButton("Rename Vault");
+        renameVaultButton.setBackground(new Color(70, 130, 180));
+        renameVaultButton.setForeground(Color.WHITE);
+        JButton deleteVaultButton = new JButton("Delete Vault");
+        deleteVaultButton.setBackground(new Color(220, 20, 60));
+        deleteVaultButton.setForeground(Color.WHITE);
+
+        JPanel vaultPanel = new JPanel();
+        vaultPanel.add(new JLabel("Vault:"));
+        vaultPanel.add(vaultComboBox);
+        vaultPanel.add(newVaultButton);
+        vaultPanel.add(renameVaultButton);
+        vaultPanel.add(deleteVaultButton);
+        topPanel.add(vaultPanel, BorderLayout.CENTER);
+
         frame.add(topPanel, BorderLayout.NORTH);
 
         // Main Panel
@@ -299,13 +330,22 @@ public class Main {
         gbc.gridwidth = 1;
         gbc.gridy = 1;
         gbc.gridx = 0;
+        addPasswordPanel.add(new JLabel("Vault:"), gbc);
+
+        JComboBox<String> addVaultComboBox = new JComboBox<>();
+        addVaultComboBox.addItem("No Vault"); // Default option
+        gbc.gridx = 1;
+        addPasswordPanel.add(addVaultComboBox, gbc);
+
+        gbc.gridy = 2;
+        gbc.gridx = 0;
         addPasswordPanel.add(new JLabel("Account Name:"), gbc);
 
         JTextField accountNameField = new JTextField(20);
         gbc.gridx = 1;
         addPasswordPanel.add(accountNameField, gbc);
 
-        gbc.gridy = 2;
+        gbc.gridy = 3;
         gbc.gridx = 0;
         addPasswordPanel.add(new JLabel("Username:"), gbc);
 
@@ -313,7 +353,7 @@ public class Main {
         gbc.gridx = 1;
         addPasswordPanel.add(usernameField, gbc);
 
-        gbc.gridy = 3;
+        gbc.gridy = 4;
         gbc.gridx = 0;
         addPasswordPanel.add(new JLabel("Password:"), gbc);
 
@@ -324,7 +364,7 @@ public class Main {
         JButton saveButton = new JButton("Save Password");
         saveButton.setBackground(new Color(70, 130, 180));
         saveButton.setForeground(Color.WHITE);
-        gbc.gridy = 4;
+        gbc.gridy = 5;
         gbc.gridx = 0;
         gbc.gridwidth = 2;
         addPasswordPanel.add(saveButton, gbc);
@@ -333,12 +373,12 @@ public class Main {
         JPanel viewPasswordsPanel = new JPanel(new BorderLayout());
 
         // Table for displaying passwords
-        String[] columnNames = {"ID", "Account Name", "Username", "Password"};
+        String[] columnNames = {"ID", "Vault", "Account Name", "Username", "Password"};
         Object[][] data = {}; // Empty data to start with
 
         JTable passwordTable = new JTable(data, columnNames);
         passwordTable.setDefaultEditor(Object.class, null); // Make table non-editable
-        passwordTable.getColumnModel().getColumn(3).setCellRenderer(new PasswordCellRenderer());
+        passwordTable.getColumnModel().getColumn(4).setCellRenderer(new PasswordCellRenderer());
 
         JScrollPane scrollPane = new JScrollPane(passwordTable);
         viewPasswordsPanel.add(scrollPane, BorderLayout.CENTER);
@@ -371,43 +411,87 @@ public class Main {
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
 
-        // Load passwords when switching to view tab or on refresh
-        ActionListener loadPasswordsAction = e -> {
+        Runnable loadVaults = () -> {
             try {
                 int userId = getUserId(currentUserEmail);
-                String query = "SELECT id, account_name, username FROM saved_passwords WHERE user_id = ?";
+                String query = "SELECT id, name FROM vaults WHERE user_id = ? ORDER BY name";
 
-                // Create a new list to hold the data
-                java.util.List<Object[]> dataList = new java.util.ArrayList<>();
+                vaultComboBox.removeAllItems();
+                addVaultComboBox.removeAllItems();
+
+                vaultComboBox.addItem("All Passwords");
+                addVaultComboBox.addItem("No Vault");
 
                 try (PreparedStatement stmt = connection.prepareStatement(query)) {
                     stmt.setInt(1, userId);
                     ResultSet rs = stmt.executeQuery();
 
                     while (rs.next()) {
-                        Object[] row = new Object[4];
-                        row[0] = rs.getInt("id");
-                        row[1] = rs.getString("account_name");
-                        row[2] = rs.getString("username");
-                        row[3] = "••••••••"; // Hidden password
-                        dataList.add(row);
+                        String vaultName = rs.getString("name");
+                        vaultComboBox.addItem(vaultName);
+                        addVaultComboBox.addItem(vaultName);
                     }
                 }
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(frame, "Error loading vaults: " + ex.getMessage());
+            }
+        };
 
-                // Convert the list to a 2D array
+        // Load vaults when application starts
+        loadVaults.run();
+
+        // Load passwords when switching to view tab or on refresh
+        ActionListener loadPasswordsAction = e -> {
+            try {
+                int userId = getUserId(currentUserEmail);
+                String query;
+                PreparedStatement stmt;
+
+                String selectedVault = (String) vaultComboBox.getSelectedItem();
+
+                if ("All Passwords".equals(selectedVault)) {
+                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username " +
+                            "FROM saved_passwords sp " +
+                            "LEFT JOIN vaults v ON sp.vault_id = v.id " +
+                            "WHERE sp.user_id = ?";
+                    stmt = connection.prepareStatement(query);
+                    stmt.setInt(1, userId);
+                } else {
+                    query = "SELECT sp.id, v.name as vault_name, sp.account_name, sp.username " +
+                            "FROM saved_passwords sp " +
+                            "JOIN vaults v ON sp.vault_id = v.id " +
+                            "WHERE sp.user_id = ? AND v.name = ?";
+                    stmt = connection.prepareStatement(query);
+                    stmt.setInt(1, userId);
+                    stmt.setString(2, selectedVault);
+                }
+
+                java.util.List<Object[]> dataList = new java.util.ArrayList<>();
+
+                ResultSet rs = stmt.executeQuery();
+                while (rs.next()) {
+                    Object[] row = new Object[5];
+                    row[0] = rs.getInt("id");
+                    row[1] = rs.getString("vault_name") != null ? rs.getString("vault_name") : "No Vault";
+                    row[2] = rs.getString("account_name");
+                    row[3] = rs.getString("username");
+                    row[4] = "••••••••"; // Hidden password
+                    dataList.add(row);
+                }
+
                 Object[][] newData = dataList.toArray(new Object[0][]);
-
                 passwordTable.setModel(new DefaultTableModel(newData, columnNames) {
                     @Override
                     public boolean isCellEditable(int row, int column) {
-                        return false; // Make all cells non-editable
+                        return false;
                     }
                 });
-                passwordTable.getColumnModel().getColumn(3).setCellRenderer(new PasswordCellRenderer());
+                passwordTable.getColumnModel().getColumn(4).setCellRenderer(new PasswordCellRenderer());
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(frame, "Error loading passwords: " + ex.getMessage());
             }
         };
+
 
         // Load passwords when switching to view tab
         tabbedPane.addChangeListener(e -> {
@@ -416,8 +500,15 @@ public class Main {
             }
         });
 
+        vaultComboBox.addActionListener(e -> {
+            if (tabbedPane.getSelectedIndex() == 1) {
+                loadPasswordsAction.actionPerformed(null);
+            }
+        });
+
         // Save Button Action
         saveButton.addActionListener(e -> {
+            String vaultName = (String) addVaultComboBox.getSelectedItem();
             String accountName = accountNameField.getText();
             String username = usernameField.getText();
             String password = new String(passwordField.getPassword());
@@ -428,15 +519,80 @@ public class Main {
             }
 
             try {
-                savePassword(accountName, username, password);
+                Integer vaultId = null;
+                if (!"No Vault".equals(vaultName)) {
+                    vaultId = getVaultId(currentUserEmail, vaultName);
+                }
+
+                savePassword(accountName, username, password, vaultId);
                 accountNameField.setText("");
                 usernameField.setText("");
                 passwordField.setText("");
                 JOptionPane.showMessageDialog(frame, "Password saved successfully!");
+                loadPasswordsAction.actionPerformed(null); // Refresh the table
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(frame, "Error: " + ex.getMessage());
             }
         });
+
+        // New Vault Button Action
+        newVaultButton.addActionListener(e -> {
+            String vaultName = JOptionPane.showInputDialog(frame, "Enter vault name:");
+            if (vaultName != null && !vaultName.trim().isEmpty()) {
+                try {
+                    createVault(vaultName);
+                    loadVaults.run();
+                    JOptionPane.showMessageDialog(frame, "Vault created successfully!");
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error: " + ex.getMessage());
+                }
+            }
+        });
+
+        // Rename Vault Button Action
+        renameVaultButton.addActionListener(e -> {
+            String selectedVault = (String) vaultComboBox.getSelectedItem();
+            if (selectedVault == null || "All Passwords".equals(selectedVault)) {
+                JOptionPane.showMessageDialog(frame, "Please select a vault to rename");
+                return;
+            }
+
+            String newName = JOptionPane.showInputDialog(frame, "Enter new name for vault:", selectedVault);
+            if (newName != null && !newName.trim().isEmpty() && !newName.equals(selectedVault)) {
+                try {
+                    renameVault(selectedVault, newName);
+                    loadVaults.run();
+                    JOptionPane.showMessageDialog(frame, "Vault renamed successfully!");
+                    loadPasswordsAction.actionPerformed(null); // Refresh the table
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error: " + ex.getMessage());
+                }
+            }
+        });
+
+        // Delete Vault Button Action
+        deleteVaultButton.addActionListener(e -> {
+            String selectedVault = (String) vaultComboBox.getSelectedItem();
+            if (selectedVault == null || "All Passwords".equals(selectedVault)) {
+                JOptionPane.showMessageDialog(frame, "Please select a vault to delete");
+                return;
+            }
+
+            int confirm = JOptionPane.showConfirmDialog(frame,
+                    "Delete vault '" + selectedVault + "' and all passwords in it?",
+                    "Confirm Delete", JOptionPane.YES_NO_OPTION);
+            if (confirm == JOptionPane.YES_OPTION) {
+                try {
+                    deleteVault(selectedVault);
+                    loadVaults.run();
+                    JOptionPane.showMessageDialog(frame, "Vault deleted successfully!");
+                    loadPasswordsAction.actionPerformed(null); // Refresh the table
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog(frame, "Error: " + ex.getMessage());
+                }
+            }
+        });
+
 
         // View Password Button Action
         viewPasswordButton.addActionListener(e -> {
@@ -467,11 +623,11 @@ public class Main {
                         String decryptedPassword = getDecryptedPassword(passwordId, masterKey);
 
                         // Temporarily show the password in the table
-                        passwordTable.setValueAt(decryptedPassword, selectedRow, 3);
+                        passwordTable.setValueAt(decryptedPassword, selectedRow, 4);
 
                         // Set a timer to hide the password again after 5 seconds
                         Timer timer = new Timer(5000, evt -> {
-                            passwordTable.setValueAt("••••••••", selectedRow, 3);
+                            passwordTable.setValueAt("••••••••", selectedRow, 4);
                         });
                         timer.setRepeats(false);
                         timer.start();
@@ -493,7 +649,7 @@ public class Main {
             int confirm = JOptionPane.showConfirmDialog(frame, "Are you sure you want to delete this password?",
                     "Confirm Delete", JOptionPane.YES_NO_OPTION);
             if (confirm == JOptionPane.YES_OPTION) {
-                int passwordId = (int) passwordTable.getValueAt(selectedRow, 0);
+                int passwordId = (int) passwordTable.getValueAt(selectedRow, 0); // ID is still first column
 
                 try {
                     deletePassword(passwordId);
@@ -514,7 +670,7 @@ public class Main {
             }
 
             // Get the password value from the table
-            Object passwordValue = passwordTable.getValueAt(selectedRow, 3);
+            Object passwordValue = passwordTable.getValueAt(selectedRow, 4);
 
             // Only allow copying if the password is visible (not bullet points)
             if (passwordValue.toString().equals("••••••••")) {
@@ -540,6 +696,63 @@ public class Main {
             frame.dispose();
             showLoginRegisterDialog();
         });
+    }
+
+    private static void createVault(String name) throws SQLException {
+        int userId = getUserId(currentUserEmail);
+        String query = "INSERT INTO vaults (user_id, name) VALUES (?, ?)";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, name);
+            stmt.executeUpdate();
+        }
+    }
+
+    private static void renameVault(String oldName, String newName) throws SQLException {
+        int userId = getUserId(currentUserEmail);
+        String query = "UPDATE vaults SET name = ? WHERE user_id = ? AND name = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setString(1, newName);
+            stmt.setInt(2, userId);
+            stmt.setString(3, oldName);
+            stmt.executeUpdate();
+        }
+    }
+
+    private static void deleteVault(String name) throws SQLException {
+        int userId = getUserId(currentUserEmail);
+
+        // First delete all passwords in the vault
+        String deletePasswordsQuery = "DELETE FROM saved_passwords WHERE user_id = ? AND vault_id = " +
+                "(SELECT id FROM vaults WHERE user_id = ? AND name = ?)";
+        try (PreparedStatement stmt = connection.prepareStatement(deletePasswordsQuery)) {
+            stmt.setInt(1, userId);
+            stmt.setInt(2, userId);
+            stmt.setString(3, name);
+            stmt.executeUpdate();
+        }
+
+        // Then delete the vault itself
+        String deleteVaultQuery = "DELETE FROM vaults WHERE user_id = ? AND name = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(deleteVaultQuery)) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, name);
+            stmt.executeUpdate();
+        }
+    }
+
+    private static Integer getVaultId(String email, String vaultName) throws SQLException {
+        int userId = getUserId(email);
+        String query = "SELECT id FROM vaults WHERE user_id = ? AND name = ?";
+        try (PreparedStatement stmt = connection.prepareStatement(query)) {
+            stmt.setInt(1, userId);
+            stmt.setString(2, vaultName);
+            ResultSet rs = stmt.executeQuery();
+            if (rs.next()) {
+                return rs.getInt("id");
+            }
+        }
+        return null;
     }
 
     // Check login attempt
@@ -612,7 +825,7 @@ public class Main {
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
                                                        boolean hasFocus, int row, int column) {
             JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-            if (column == 3) { // Password column
+            if (column == 4) { // Password column is now column 4
                 label.setText(value.toString());
             }
             return label;
@@ -721,18 +934,22 @@ public class Main {
         }
     }
 
-    private static void savePassword(String accountName, String username, String password) throws Exception {
+    private static void savePassword(String accountName, String username, String password, Integer vaultId) throws Exception {
         String encryptedPassword = encrypt(password, currentUserMasterKey);
-
-        // Get user ID
         int userId = getUserId(currentUserEmail);
 
-        String query = "INSERT INTO saved_passwords (user_id, account_name, username, encrypted_password) VALUES (?, ?, ?, ?)";
+        String query = "INSERT INTO saved_passwords (user_id, vault_id, account_name, username, encrypted_password) " +
+                "VALUES (?, ?, ?, ?, ?)";
         try (PreparedStatement stmt = connection.prepareStatement(query)) {
             stmt.setInt(1, userId);
-            stmt.setString(2, accountName);
-            stmt.setString(3, username);
-            stmt.setString(4, encryptedPassword);
+            if (vaultId != null) {
+                stmt.setInt(2, vaultId);
+            } else {
+                stmt.setNull(2, Types.INTEGER);
+            }
+            stmt.setString(3, accountName);
+            stmt.setString(4, username);
+            stmt.setString(5, encryptedPassword);
             stmt.executeUpdate();
         }
     }
